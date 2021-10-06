@@ -1,0 +1,184 @@
+name: Pipe CI - Testes
+
+on:
+  push:
+    branches-ignore:
+      - main
+      - homolog
+      - release
+      - develop
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    name: Build NPM
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v2
+
+      - name: Use Node.js 12.x
+        uses: actions/setup-node@v2
+        with:
+          node-version: 12.x
+
+      - name: Cache .npm
+        uses: actions/cache@v2
+        with:
+          path: ~/.npm
+          key: ${{ runner.os }}-node-${{ hashFiles('**/package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-node-
+
+      - name: Cache Node Modules
+        uses: actions/cache@v2
+        with:
+          path: ./node_modules
+          key: ${{ runner.os }}-modules-${{ hashFiles('**/package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-modules-
+
+      - name: Configure NPM
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.PERSONAL_ACCESS_TOKEN  }}
+        run: |
+          cat <<EOF > .npmrc
+          @queimadiaria:registry=https://npm.pkg.github.com/
+          //npm.pkg.github.com/:_authToken=$NODE_AUTH_TOKEN
+          EOF
+
+      - name: Install
+        env:
+          CI: true
+        run: npm ci --prefer-offline --no-audit
+
+
+      - name: Lint
+        run: npm run build
+
+  test:
+    runs-on: ubuntu-latest
+    name: Test NPM
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v2
+
+      - name: Use Node.js 12.x
+        uses: actions/setup-node@v2
+        with:
+          node-version: 12.x
+
+      - name: Cache .npm
+        uses: actions/cache@v2
+        with:
+          path: ~/.npm
+          key: ${{ runner.os }}-node-${{ hashFiles('**/package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-node-
+
+      - name: Cache Node Modules
+        uses: actions/cache@v2
+        with:
+          path: ./node_modules
+          key: ${{ runner.os }}-modules-${{ hashFiles('**/package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-modules-
+
+      - name: Configure NPM
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.PERSONAL_ACCESS_TOKEN  }}
+        run: |
+          cat <<EOF > .npmrc
+          @queimadiaria:registry=https://npm.pkg.github.com/
+          //npm.pkg.github.com/:_authToken=$NODE_AUTH_TOKEN
+          EOF
+
+
+      - name: Install
+        run: npm ci --prefer-offline --no-audit
+        env:
+          CI: true
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Unit Tests
+        if: 1 == 0
+        run: npm run test:cov
+        env:
+          NODE_ENV: test
+          NO_CONSUME: 'true'
+        continue-on-error: true
+      
+      - name: Archive code coverage results
+        uses: actions/upload-artifact@v2
+        with:
+          name: code-coverage-report
+          path: |
+            test-report.xml
+            coverage
+
+  sonar:
+    if: github.event_name == 'pull_request'
+    name: Sonar Analysis
+    needs:
+      - test
+      - build
+    runs-on: ubuntu-latest
+    steps:
+
+      - name: Checkout code
+        uses: actions/checkout@v2
+        with:
+          fetch-depth: 0
+      
+      - name: Download a coverage artifact
+        uses: actions/download-artifact@v2
+        with:
+          name: code-coverage-report
+
+      - run: ls -lha
+
+      - name: Basic Sonar Analysis
+        uses: docker://sonarsource/sonar-scanner-cli:latest
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
+
+
+      # - name: SonarQube Quality Gate check
+      #   uses: sonarsource/sonarqube-quality-gate-action@master
+      #   env:
+      #     SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+      #     SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
+      #   with:
+      #     scanMetadataReportFile: .scannerwork/report-task.txt
+
+  migration:
+    if: github.event_name == 'pull_request'
+    name: Test Migration
+    needs:
+      - sonar
+    runs-on: ubuntu-latest
+    steps:
+
+      - name: Checkout code
+        uses: actions/checkout@v2
+        with:
+          fetch-depth: 0
+
+      - name: Configure NPM
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.PERSONAL_ACCESS_TOKEN  }}
+        run: |
+          cat>.npmrc<<EOF
+          @queimadiaria:registry=https://npm.pkg.github.com/
+          //npm.pkg.github.com/:_authToken=$NODE_AUTH_TOKEN
+          EOF
+
+      - name: Docker Compose App
+        run: make migration
+

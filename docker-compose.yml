@@ -1,0 +1,49 @@
+---
+version: "2.4"
+services:
+  db:
+    image: postgres:11
+    ports:
+      - '5432'
+    volumes:
+      - 'postgres_data:/data'
+    environment:
+      POSTGRES_PASSWORD: 123
+      POSTGRES_DB: qd_base_db
+    networks:
+      queima-back-tier:
+          aliases:
+            - pgdb
+    healthcheck:
+      test: pg_isready -U postgres -h 127.0.0.1
+      interval: 5s
+
+  api:
+    image: api
+    build: 
+      context: '.'
+      dockerfile: Dockerfile
+      network: host
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      NODE_ENV: local
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:3000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 2
+      start_period: 30s
+    ports: 
+      - '3000:3000'
+    networks:
+      - queima-back-tier
+
+volumes:
+  postgres_data: {}
+
+networks:
+  queima-back-tier: {}
+
+    
